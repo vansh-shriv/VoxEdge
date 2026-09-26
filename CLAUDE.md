@@ -4,52 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (environment + simulated PDM audio ingestion) Phase 1 (FreeRTOS task skeleton), and Phase 2 (log-mel features via CMSIS-DSP, cross-checked against a Python reference) are done. Phase 3 (model training: DS-CNN for keyword "marvin", int8 TFLite in `ml/artifacts/`) is done. On-device inference is still a stub; Phase 4 (TFLite-Micro integration) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
+Phases 0-4 are done: Renode PDM capture, FreeRTOS pipeline, log-mel features (CMSIS-DSP), DS-CNN keyword model for "marvin" (Speech Commands v0.02), and on-device int8 inference with TFLite-Micro + CMSIS-NN, verified against the Python model. Phase 5 (robustness/overload suite) is next, then Phase 6 (streaming evaluation corpus, CI, README). **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
 
 ## Commands (Git Bash on Windows)
 
-- Main firmware (FreeRTOS): `bash tools/run_phase1.sh` builds `firmware/`, runs headless Renode on `burst_3s`, and validates `build/uart0.log`. Artifacts go to `build/` (`uart0.log`, `renode.out`).
-- Feature cross-check: `bash tools/run_phase2.sh [tol]` regenerates DSP tables, builds with `DUMP_FEATURES=1`, runs `features_2s`, and diffs every on-device log-mel vector against `ml/features.py`.
-- Model pipeline (host, long-running): `python ml/prepare_data.py` (needs the Speech Commands v0.02 archive in `D:\EmbeddedProjects\datasets`, outside the repo; writes an 858 MB feature cache), then `python ml/train.py [xs|s|m]`, `python ml/quantize.py [xs|s|m]`. `python ml/eval.py <variant>` re-evaluates a saved float model.
-- Phase 0 bare-metal capture regression: `bash tools/run_phase0.sh` (builds `firmware/phase0`, checks UART samples equal the source PCM).
-- Build only: `cd firmware && mingw32-make -B` (`firmware/phase0` has its own Makefile). The Arm GNU Toolchain is not on PATH; the Makefile's `TOOLCHAIN` variable points at its `bin/`.
-- Run Renode by hand from the repo root: `Renode.exe --disable-xwt --plain --console -e '$pcm=@sim/wav_corpus/synthetic/<file>.s16le.pcm; include @sim/boot.resc' < /dev/null`. `boot.resc` takes `$elf`, `$pcm`, `$uartlog`, `$runtime`, loads `sim/platform.repl`, and sets `cpu PerformanceInMips 64`.
-- Generate test signals: `python tools/make_test_wav.py` (1 kHz ramp tone), `python tools/make_burst_wav.py` (silence/tone/silence).
-- After `git clone`, run `git submodule update --init` (FreeRTOS-Kernel V11.1.0, CMSIS-DSP, CMSIS_6 in `third_party/`). Python deps for `ml/` and the tools: numpy, scipy, librosa.
-- Renode input is raw s16le PCM (`pdm SetInputFile`), not WAV. In `.resc` files the UART log path must be absolute and quoted (`$ORIGIN` does not expand); `boot.resc` hardcodes `D:/EmbeddedProjects/Voxedge/build/uart0.log`.
+- After `git clone`: `git submodule update --init` (FreeRTOS-Kernel, CMSIS-DSP, CMSIS_6, tflite-micro in `third_party/`), then `bash tools/fetch_tflm_deps.sh` (flatbuffers, gemmlowp, ruy, CMSIS-NN into git-ignored `third_party/tflm_deps/`, MD5-verified). Python deps: numpy, scipy, librosa, soundfile, tensorflow (`ml/requirements.txt`).
+- Model on device: `bash tools/run_phase4.sh [xs|s|m] [runtime_s] [pcm] [make vars]` builds, runs headless Renode on `sim/wav_corpus/kws/demo.s16le.pcm` (create with `python tools/make_kws_demo.py`), and checks parity against the Python int8 model plus cycle cost. Defaults to a stress configuration (`INFER_EVERY=5`, all input tensors dumped); override e.g. `KERNELS=ref`.
+- Regressions: `bash tools/run_phase0.sh` (bare-metal capture equals source PCM), `bash tools/run_phase1.sh` (pipeline plumbing, no drops), `bash tools/run_phase2.sh` (on-device log-mel vs `ml/features.py`, inference disabled in that build).
+- Firmware build only: `cd firmware && mingw32-make -j8 [MODEL=xs|s|m] [KERNELS=cmsis|ref] [DUMP_FEATURES=1] [DUMP_INFER=1] [INFER_EVERY=n] [ARENA_KB=n] [OPT=-Os]` (variables documented at the top of `firmware/Makefile`; `firmware/phase0` has its own). Each configuration has its own object dir; `voxedge.elf` is copied from it on every build. The Arm GNU Toolchain is not on PATH; `TOOLCHAIN` in the Makefile points at it.
+- Model pipeline (host, long-running): `python ml/prepare_data.py` (needs `speech_commands_v0.02.tar.gz` in `D:\EmbeddedProjects\datasets`, outside the repo; writes an 858 MB feature cache), `python ml/train.py [xs|s|m]`, `python ml/quantize.py [xs|s|m]`, `python tools/tflite_to_c.py` (embeds `ml/artifacts/*.tflite` as C arrays), `python tools/gen_dsp_tables.py` (feature tables).
+- Run Renode by hand from the repo root: `Renode.exe --disable-xwt --plain --console -e '$pcm=@<file>.s16le.pcm; $runtime="16.5"; include @sim/boot.resc' < /dev/null`. `boot.resc` takes `$elf`, `$pcm`, `$uartlog`, `$runtime`, loads `sim/platform.repl`, sets `cpu PerformanceInMips 64`. Input is raw s16le PCM, not WAV. The UART log path must be absolute and quoted (`$ORIGIN` does not expand); `boot.resc` hardcodes `D:/EmbeddedProjects/Voxedge/build/uart0.log`.
+- Write multi-file or long scripts with the Write tool, not shell heredocs (the shell tool mis-parses long ones). Write Makefiles with Edit/Write, not Python string replacement.
 
-## Project
+## Architecture
 
-VoxEdge is an on-device wake-word (keyword spotting) audio pipeline that runs **entirely under Renode**. There is no physical board or microphone. Renode executes the real compiled ARM binary, and only the microphone is simulated, by playing back WAV files.
-
-- Target: nRF52840 (Arduino Nano 33 BLE Sense) under Renode. Renode's simulated PDM peripheral plays WAV files as mic input at 16 kHz. Renode's `micro_speech` demo for this board is the reference to build from.
-- Fallback if the PDM model has gaps: a custom Python Renode peripheral (memory-mapped "sample ready" and data registers, fed from a WAV on a timer). Try the built-in PDM first and document which path was used.
-
-## Architecture (from the spec)
-
-Signal path: WAV → Renode PDM playback → PDM data-ready ISR → ring buffer (double-buffer pattern) → FreeRTOS tasks.
-
-Tasks and priorities (highest to lowest): ISR > Capture/Framer > DSP > Inference > Telemetry.
-- ISR does the minimum (hand off the pointer, signal, return) and sends to the Capture task via `xStreamBufferSendFromISR`.
-- DSP task: 30 ms window / 10 ms hop at 16 kHz, pre-emphasis, Hamming window, CMSIS-DSP FFT, mel filterbank, log-mel or MFCC.
-- Inference task: int8 TFLite-Micro keyword-spotting model (DS-CNN or similar) with a static tensor arena.
-- Decision logic (threshold, debounce) then toggles a GPIO that Renode watches or logs. Telemetry task reports UART stats plus heap/stack watermarks.
-
-Planned layout: `firmware/` (C, `src/dsp`, `src/model`, `src/tasks`), `ml/` (train/quantize/eval in Python), `sim/` (`platform.repl`, `boot.resc`, `wav_corpus/`, `robot/` Robot Framework suites), `tools/`, `tests/unit/` (host-run), `docs/`, `.github/workflows/ci.yml`.
+Signal path: PCM file → Renode PDM model → PDM ISR (double buffer) → FreeRTOS tasks. Priorities: ISR > capture (5) > DSP (4) > inference (3) > telemetry (1) > idle (WFI hook).
+- **ISR** (`src/pdm_capture.c`): re-arms the next EasyDMA buffer, copies the finished 10 ms hop into a stream buffer, or drops the whole hop and counts an overrun.
+- **Capture** (`tasks/capture.c`): hops → overlapping 30 ms windows on a queue.
+- **DSP** (`tasks/dsp.c`, `dsp/features.c`): float32 CMSIS-DSP 512-pt rfft → 40 log-mel values. It also **owns the feature ring** (`dsp/feature_ring.c`: last 98 vectors, normalised and int8-quantised) and every `INFER_EVERY` hops snapshots it and notifies the inference task, or skips and counts if inference is still busy. Features are never lost; overload only lowers the inference rate.
+- **Inference** (`tasks/inference.c`, `model/kws.cc`): TFLite-Micro with a static arena, model chosen at link time (`MODEL=`), threshold `KWS_P_ON` → wake GPIO + `E` event.
+- **Telemetry**: lowest-priority UART reporter (`T` stats each second, `E` events, and `F`/`L`/`Q` debug dumps behind build flags) via a queue set. Debug dumps can drop while inference runs; that is expected.
+- `sim/platform.repl` = stock Nano 33 BLE plus SysTick at 64 MHz and a DWT shim. `ml/` = features reference, data prep, model, training, quantization, eval. `tools/` = generators, cross-checks, runners.
 
 ## Constraints that must hold across changes
 
-- **Feature definition lives in `ml/feature_config.py` + `ml/features.py`.** Firmware tables (`firmware/src/dsp/dsp_tables.*`) are generated from them by `tools/gen_dsp_tables.py`; never hand-edit those. Training must reuse `ml/features.py` so train and deploy inputs match.
-- **Cycle numbers in Renode are instruction counts** (a DWT shim in `sim/platform.repl` serves `CYCCNT` from executed instructions at an assumed 64 MIPS / 1 IPC), so they are lower bounds. Use PDM hop `seq` for audio time, since Renode's SysTick starts about 262 ms late.
-- **Correctness cross-checks are mandatory before trusting end-to-end results**: on-device CMSIS-DSP features must match the Python/librosa reference on identical samples (§4.2), and on-device TFLite-Micro int8 output must match the Python quantized model on identical feature vectors (§4.3).
-- **Robustness requirement**: the capture task must never miss a PDM buffer handoff even when DSP/inference is stalled. Overruns must be detected, reported, and recovered from without data corruption. Test with a debug build that injects a busy-loop, and with pathological WAVs (clipped, silence, max-amplitude white noise).
-- **Honest metrics**:
-  - Latency is reported in *simulated time* or CPU cycles from the emulated cycle counter, never wall-clock.
-  - Real-time margin means cycles per DSP frame or inference call relative to the budget of one 10 ms hop.
-  - **Power/current is not measured.** Docs and README must say so explicitly. Do not invent power numbers.
-  - Sleep-mode (WFI) logic is optional (Option A: implement it and verify via Renode's trace; Option B: drop it and say so).
-- Evaluation metrics: hit rate (clean and noisy positives) and false-accepts per hour of negative audio. The spec calls for 50+ clean positives, 50+ noisy positives, and 30+ min of negatives, all versioned and re-run in CI.
+- **Feature definition lives in `ml/feature_config.py` + `ml/features.py`.** Firmware tables (`firmware/src/dsp/dsp_tables.*`) and `firmware/src/model/model_*.c`/`model_meta.h` are generated (`tools/gen_dsp_tables.py`, `tools/tflite_to_c.py`); never hand-edit them. Training must reuse `ml/features.py` so train and deploy inputs match.
+- **Cycle numbers in Renode are instruction counts** (DWT shim serves `CYCCNT` from executed instructions at an assumed 64 MIPS / 1 IPC), so they are lower bounds. Use PDM hop `seq` for audio time; Renode's SysTick starts about 262 ms late.
+- **Cross-checks are mandatory before trusting results**: features vs Python (`run_phase2.sh`, spec 4.2) and model output vs the Python int8 model (`run_phase4.sh`, spec 4.3). CMSIS-NN may differ by 1 LSB in rare inferences; reference kernels must be exact.
+- **Verify what actually ran**: a stale ELF once produced false passes. After changing build variables, check the size/telemetry line (`arena`, `runs`, `infcyc_*`).
+- **Robustness requirement**: capture must never miss a PDM handoff even when DSP/inference is stalled; overruns are detected, reported, and recovered from without corruption (demonstrated so far with overloaded inference; systematic tests are Phase 5).
+- **Honest metrics**: latency in simulated time or emulated instruction counts, never wall-clock; real-time margin = cycles per stage relative to one 10 ms hop; **power/current is not measured** and docs must say so; hit rate (clean and noisy) and false accepts per hour on streaming audio are the evaluation metrics (spec asks 50+ clean, 50+ noisy positives, 30+ min negatives; clip-level numbers so far are not streaming numbers).
 
-## Open decisions (spec §8)
+## Resolved decisions
 
-Not yet resolved: the Renode PDM model's completeness for WAV playback, the keyword (Speech Commands word vs custom-recorded, custom preferred), and log-mel vs MFCC features. Check the repo and docs for a recorded decision before assuming one.
+PDM path: built-in Renode model. Features: log-mel (not MFCC). Keyword: "marvin" from Speech Commands. Model: `s` DS-CNN (4.1k params, 1.67 M MACs) with CMSIS-NN, inference every 400 ms, P_ON 0.9 (from the Phase 3 table, not yet tuned). Details and numbers are in `docs/PROGRESS.md`.

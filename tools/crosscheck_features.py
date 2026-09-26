@@ -61,7 +61,7 @@ if tel:
         budget = CPU_HZ * HOP // 16000
         print(f"features_compute cycles: avg={t['dspcyc_avg']} max={t['dspcyc_max']}  "
               f"hop budget={budget}  -> avg {100 * t['dspcyc_avg'] / budget:.1f}% / max {100 * t['dspcyc_max'] / budget:.1f}% of one hop")
-    for k in ("ovr", "dspdrop", "infdrop", "evtdrop", "dumpdrop"):
+    for k in ("ovr", "dspdrop", "evtdrop", "dumpdrop"):
         check(t[k] == 0, f"{k} == 0")
 
 sys.exit(1 if fails else 0)

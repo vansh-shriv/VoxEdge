@@ -48,3 +48,22 @@ void uart_puthex32(uint32_t v)
     t[8] = 0;
     uart_puts(t);
 }
+
+void uart_puti(int32_t v)
+{
+    if (v < 0) { uart_puts("-"); uart_putu((uint32_t)(-(int64_t)v)); }
+    else uart_putu((uint32_t)v);
+}
+
+void uart_puthex_bytes(const uint8_t *p, uint32_t n)
+{
+    static const char h[] = "0123456789abcdef";
+    char t[65];
+    while (n) {
+        uint32_t k = n > 32 ? 32 : n;
+        for (uint32_t i = 0; i < k; i++) { t[2 * i] = h[p[i] >> 4]; t[2 * i + 1] = h[p[i] & 0xF]; }
+        t[2 * k] = 0;
+        uart_puts(t);
+        p += k; n -= k;
+    }
+}

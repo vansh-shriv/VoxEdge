@@ -30,6 +30,7 @@ Newest entries at the bottom of each phase. Update this file whenever a mileston
 `bash tools/run_phase0.sh` (builds, runs headless Renode, validates). Artifacts land in `build/` (`uart0.log`, `renode.out`).
 
 ### Gotchas found
+- **Object-sharing bug (found while committing; fixed, re-measurement pending)**: the Makefile helper was named `strip`, a make built-in, so `$(call strip,..)` never removed `../` and third-party objects (FreeRTOS, CMSIS-DSP/NN, TFLite-Micro) were written to `obj/third_party/`, shared by every configuration. Consequences: (a) the `-O2` experiment above reused `-Os` third-party objects, so it says nothing; (b) CMSIS-NN builds may have reused TFLM core objects built earlier for reference kernels. The core objects only differ by `-DCMSIS_NN`, which does not affect them, and the CMSIS-NN kernel objects are only compiled by cmsis builds, so the CMSIS numbers and parity results below are very probably right, but they were **not** measured from clean per-configuration trees. `tools/run_phase4_matrix.sh` re-measures the whole matrix from clean trees (output `build/phase4_matrix.log`); until it has been folded into this file, treat the CMSIS-NN rows as provisional. The reference-kernel rows were built before `KERNELS` existed and are unaffected.
 - Renode 1.16 hangs with `--console` alone under a non-interactive shell; use `--plain --console --disable-xwt`, `-e "...; quit"` (the script ends with `quit`), and redirect stdin from `/dev/null`.
 - `CreateFileBackend` needs an **absolute, quoted** path, and `$ORIGIN` does not expand inside `@...`. `sim/boot.resc` hardcodes `D:/EmbeddedProjects/Voxedge/build/uart0.log`, so it must change if the repo moves. `build/` must exist first.
 - Paths with spaces break `.resc` tokenization unless quoted. The repo was originally under `D:\Embedded Projects`; it now lives at `D:\EmbeddedProjects\Voxedge` (space removed).
@@ -137,5 +138,63 @@ Operating points (int8, clip-level false accepts per hour of 1 s clips): `m` at 
 - Unknown-word training uses 20,000 of 83,133 clips; more negatives may reduce false accepts.
 - Test data was used for reporting only. The best-validation-accuracy checkpoint was kept per variant.
 
-## Next: Phase 4 — on-device inference (TFLite-Micro)
-Integrate TFLite-Micro (submodule, static tensor arena) with `marvin_s_int8.tflite` as a C array; keep a ring of the last 98 feature vectors; run inference every N hops; quantise input with the stored scale/zero-point; measure cycles per inference for xs/s/m; parity check against the Python int8 interpreter on the same features (spec §4.3). Open: TFLM build flags on this toolchain (reference kernels vs CMSIS-NN), arena size, inference cadence vs CPU budget.
+## Phase 4 — on-device inference (TFLite-Micro)
+
+**Status: complete (2026-09-27).** The int8 model runs on the emulated nRF52840 under TFLite-Micro, its output is verified against the Python int8 model, and the latency/accuracy tradeoff is measured for all three sizes with both kernel sets. Run: `bash tools/run_phase4.sh [xs|s|m] [runtime_s] [pcm] [make vars]` (needs `python tools/make_kws_demo.py` once for the demo stream).
+
+### What was built
+- **TFLite-Micro** (submodule `third_party/tflite-micro`, HEAD 2026-09-25) compiled by our own Makefile, not its generator: only the ~55 C++ files this model needs, `-fno-exceptions -fno-rtti`, static tensor arena, `MicroMutableOpResolver<4>` (Conv2D, DepthwiseConv2D, FullyConnected, Mean). `tools/fetch_tflm_deps.sh` downloads flatbuffers, gemmlowp, ruy and CMSIS-NN into `third_party/tflm_deps/` (git-ignored) at the exact versions TFLM pins, verifying each MD5.
+- **Kernels** (`KERNELS=cmsis|ref`, default cmsis): CMSIS-NN via TFLM's own `kernels/cmsis_nn/{conv,depthwise_conv,fully_connected}.cc` (needs `-DCMSIS_NN`), or TFLM reference kernels.
+- **Model embedding**: `tools/tflite_to_c.py` writes `firmware/src/model/model_{xs,s,m}.c` + `model_meta.h` (normalisation mean/std). Input/output quantisation params are read from the model at run time. Select with `MODEL=`.
+- **Data path** (changed from Phases 1-3): the **DSP task owns a ring of the last 98 feature vectors, already normalised and quantised to int8** (`dsp/feature_ring.c`). Every `INFER_EVERY` hops (once the ring is full) it snapshots the ring and notifies the inference task. If inference is still running, the trigger is **skipped and counted** (`skipped`), never queued, so features are never lost and capture/DSP are never blocked. (The first design had inference own the ring, fed through a queue; a slow model would have dropped frames and silently corrupted every later input.)
+- **Inference task** (prio 3, 1024-word stack): runs the model, softmax on dequantised logits, a single inference above `KWS_P_ON` = 0.90 raises wake (GPIO P0.24 + `E ... R` event), the first inference below drops it. Cost is measured with the DWT shim.
+- Build system: per-configuration object dirs (`obj/<kernels><opt>-<model>-f..i..-e..-a..-q../`), link through a response file, `voxedge.elf` copied from the configuration's ELF on every build.
+- Debug channel (`DUMP_INFER=1`): `L <seq> <3 int8 logits> <p_key x1000>` per inference and sampled `Q <seq> <3920 int8 hex>` input tensors.
+
+### Parity against the Python int8 model (`tools/crosscheck_model.py`, spec 4.3)
+Demo stream: 5 marvin + 5 other-word clips from the test split (never trained on), `tools/make_kws_demo.py`. Three checks:
+- **A** device logits vs the Python TFLite interpreter (reference kernels, `BUILTIN_REF`) fed the *device's own* input tensor.
+- **B** device input tensor vs Python quantisation of the float64 reference features (validates features, ring ordering and quantisation).
+- **C** end-to-end logits/argmax vs Python from reference features.
+
+| model | kernels | A exact | B input-tensor diffs | C argmax agree |
+|---|---|---|---|---|
+| xs | ref | 4/4 | 0/15,680 | pass |
+| s | ref | 2/2 | 0/7,840 | pass |
+| m | ref | 1/1 | 0/3,920 | pass |
+| xs | CMSIS-NN | **102/103** (one logit off by 1 LSB at seq 805: device 52 vs Python 51) | 0/380,240 | 91/91 (6 near-ties) |
+| s | CMSIS-NN | 62/62 | 0/227,360 | 58/58 |
+| m | CMSIS-NN | 28/28 | 0/105,840 | 25/25 |
+
+Reference kernels are bit-exact but were tested on very few inferences (they take seconds each). CMSIS-NN shows one 1-LSB difference in 193 inferences. It is likely a rare requantisation rounding difference in CMSIS-NN, but that is **not proven** (the reference runs are too few to isolate it). The checker requires exactness for `KERNELS=ref` and allows at most 1 LSB in at most 1 % of inferences for `cmsis`, always printing the count.
+
+### Latency / accuracy tradeoff (instructions per `kws_infer()`, treated as cycles; see caveat)
+| model | MACs | int8 hit clean/noisy (Phase 3) | reference kernels | CMSIS-NN | speed-up | CMSIS-NN instr/MAC | arena used |
+|---|---|---|---|---|---|---|---|
+| xs | 0.72 M | 72 / 55 % | 89.97 M (1,406 ms) | **7.10 M (111 ms)** | 12.7x | 9.9 | 18.0 KB |
+| s | 1.67 M | 88 / 85 % | 199.49 M (3,117 ms) | **12.91 M (201.6 ms)** | 15.5x | 7.7 | 27.0 KB |
+| m | 6.43 M | 91 / 89 % | 722.56 M (11,290 ms) | **33.04 M (516.2 ms)** | 21.9x | 5.1 | 53.5 KB |
+
+(ms = instructions / 64 MHz.) Reference kernels cost 112-125 instructions per MAC, unusable in real time. An `-O2` trial showed no gain, but **that trial is invalid** (see the object-sharing bug below) and is being redone.
+
+### Operating point and load
+- **Chosen: `s`, CMSIS-NN, `INFER_EVERY=40` (one inference per 400 ms), P_ON 0.9, single hit.** At the 50 ms stress cadence `s` is overloaded (248 of 310 triggers skipped), yet **capture and DSP were never starved: 0 overruns and 0 drops** in every run, including the 3-11 s reference-kernel inferences. That is the overload/degradation behaviour of spec 4.4, demonstrated.
+- Default build (no dumps): **35.3 M instr/s = 55 % of a 64 MHz core** (model about 32 M/s, features about 4 M/s), matching the sum of the parts. Idle is WFI. 114 KB flash, 136 KB RAM (64 KB arena, 48 KB FreeRTOS heap).
+- Demo stream at that setting: wake raised for **5/5 marvin clips and 0/5 other-word clips** (rises at seq 120, 440, 720, 1000, 1320). Anecdotal (10 clips, one selection seed), not an accuracy measurement.
+- Inference task stack high-water: 665 of 1024 words free, so 512 words would do.
+
+### Gotchas found
+- **Windows command-line limit**: the link line exceeded it once CMSIS-NN was added. The tail was silently truncated and `ld` reported a bogus `crti.o` `_init` conflict plus a half path. Fixed with a linker response file (`@objs.rsp`; GNU Make 3.82 has no `$(file)`, so one `echo` per object).
+- **Makefile bugs that produced false passes**: (1) `voxedge.elf` was not tied to the configuration, so a stale ELF from another `MODEL` was reused; (2) adding the response-file rule ahead of the ELF rule changed the default goal, so a bare `make` stopped linking and the Phase 1/2 scripts ran stale ELFs. Fixed with a per-configuration ELF, an always-copy phony `voxedge.elf`, and `.DEFAULT_GOAL`. Lesson: check the size/telemetry of what actually ran.
+- TFLM needs `-DCMSIS_NN` when using its `cmsis_nn/` kernels (otherwise redefinition errors); `GetBuiltinCode` comes from `tensorflow/compiler/mlir/lite/schema/schema_utils.cc`; `_sbrk` is stubbed to fail so newlib `malloc` can never silently eat RAM; `.init_array` support plus empty `_init/_fini` are needed for C++ statics.
+- The debug dumps (telemetry is priority 1) drop entries while a 200 ms inference runs. The feature cross-check (`run_phase2.sh`) therefore builds with `INFER_EVERY=1000000` so it measures DSP only. Normal builds are unaffected.
+- `tools/run_phase1.sh` is now a pipeline-plumbing check with no wake expectations: the energy stub is gone.
+
+### Caveats / not yet verified
+- **Instructions are not cycles**: `kws_infer` numbers come from the DWT shim (`ExecutedInstructions`, assumed 64 MIPS at 1 IPC). A real M4 has flash wait states, load-use stalls and multi-cycle FPU ops, so real time is longer. CMSIS-NN's SIMD kernels may also have a different instruction-to-cycle ratio than the reference kernels, so the speed-up ratios are indicative only.
+- Decision parameters (P_ON, single hit, cadence) come from the Phase 3 table, not tuning. Real hit rate and false accepts per hour on streaming audio come in Phase 6.
+- 7.7 instr/MAC is high for CMSIS-NN; which layer dominates is not profiled (the 10x4 strided front-end conv is a suspect).
+- Nothing yet skips inference during silence; a cheap energy gate could cut the 55 % load substantially.
+
+## Next: Phase 5 — robustness and overload testing
+Deliberate stalls (debug busy-loop in DSP/inference), pathological WAVs (clipped, silence, max-amplitude noise), watchdog, buffer-overrun recovery, long-run stack/heap watermarks (spec 4.4). Much of the overload behaviour is already demonstrated above; Phase 5 makes it a systematic test suite.

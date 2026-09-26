@@ -1,0 +1,65 @@
+{
+ "samples": 248000,
+ "clips": [
+  {
+   "start": 8000,
+   "end": 24000,
+   "label": "marvin",
+   "source": "marvin/9dc1889e_nohash_0.wav"
+  },
+  {
+   "start": 32000,
+   "end": 48000,
+   "label": "unknown",
+   "source": "backward/85d2ac4b_nohash_1.wav"
+  },
+  {
+   "start": 56000,
+   "end": 72000,
+   "label": "marvin",
+   "source": "marvin/aa48c94a_nohash_0.wav"
+  },
+  {
+   "start": 80000,
+   "end": 96000,
+   "label": "unknown",
+   "source": "go/5eb5fc74_nohash_1.wav"
+  },
+  {
+   "start": 104000,
+   "end": 120000,
+   "label": "marvin",
+   "source": "marvin/ef2a3cfb_nohash_1.wav"
+  },
+  {
+   "start": 128000,
+   "end": 144000,
+   "label": "unknown",
+   "source": "go/bfd26d6b_nohash_1.wav"
+  },
+  {
+   "start": 152000,
+   "end": 168000,
+   "label": "marvin",
+   "source": "marvin/90b94017_nohash_0.wav"
+  },
+  {
+   "start": 176000,
+   "end": 192000,
+   "label": "unknown",
+   "source": "wow/8494fba8_nohash_0.wav"
+  },
+  {
+   "start": 200000,
+   "end": 216000,
+   "label": "marvin",
+   "source": "marvin/e1469561_nohash_0.wav"
+  },
+  {
+   "start": 224000,
+   "end": 240000,
+   "label": "unknown",
+   "source": "up/ad6a46f1_nohash_0.wav"
+  }
+ ]
+}

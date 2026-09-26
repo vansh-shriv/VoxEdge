@@ -2,6 +2,11 @@
 
 extern uint32_t _estack, _sidata, _sdata, _edata, _sbss, _ebss;
 extern int main(void);
+extern void __libc_init_array(void);
+void _init(void) {}
+/* No newlib heap: all memory is static or FreeRTOS heap_4. Any malloc() fails loudly instead of eating RAM. */
+void *_sbrk(int incr) { (void)incr; return (void *)-1; }
+void _fini(void) {}
 
 void Default_Handler(void) { for (;;) ; }
 #define WEAK_DEFAULT __attribute__((weak, alias("Default_Handler")))
@@ -24,6 +29,7 @@ void Reset_Handler(void)
     for (dst = &_sbss; dst < &_ebss; ) *dst++ = 0;
     *(volatile uint32_t *)0xE000ED88 |= (0xFu << 20);   /* CPACR: enable FPU (CP10/CP11) */
     __asm volatile("dsb; isb");
+    __libc_init_array();
     main();
     for (;;) __asm volatile("wfi");
 }

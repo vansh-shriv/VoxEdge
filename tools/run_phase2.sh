@@ -8,7 +8,9 @@ mkdir -p build
 PCM=sim/wav_corpus/synthetic/features_2s.s16le.pcm
 [ -f "$PCM" ] || python tools/make_feature_test_wav.py
 python tools/gen_dsp_tables.py
-(cd firmware && mingw32-make -B DUMP_FEATURES=1)
+# INFER_EVERY huge = model never runs: the debug dump is the lowest-priority task and would drop vectors
+# while a 200 ms inference is executing; this test isolates the DSP path.
+(cd firmware && mingw32-make -j8 DUMP_FEATURES=1 INFER_EVERY=1000000)
 rm -f build/uart0.log
 timeout 300 "/c/Program Files/Renode/bin/Renode.exe" --disable-xwt --plain --console \
   -e '$pcm=@sim/wav_corpus/synthetic/features_2s.s16le.pcm; $runtime="2.6"; include @sim/boot.resc' \

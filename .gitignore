@@ -2,3 +2,5 @@ build/
 *.elf
 *.map
 __pycache__/
+third_party/tflm_deps/
+firmware/obj/
