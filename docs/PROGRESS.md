@@ -71,5 +71,36 @@ Newest entries at the bottom of each phase. Update this file whenever a mileston
 - Stub DSP/inference are placeholders (Phase 2/4). The final task priorities and queue depths are provisional until real per-frame costs are known.
 - Overrun/overload behavior is not yet exercised (Phase 5).
 
-## Next: Phase 2 — real feature extraction
-CMSIS-DSP (submodule) pre-emphasis, Hamming window, FFT, mel filterbank, log-mel, cross-checked against a librosa reference on the same PCM (spec §4.2). Needs a decision on log-mel vs MFCC (spec open decision 3).
+## Phase 2 — real feature extraction
+
+**Status: functionally complete (2026-09-26).** `bash tools/run_phase2.sh` regenerates tables, builds with `DUMP_FEATURES=1`, runs Renode on `features_2s`, and cross-checks every on-device log-mel vector against the Python reference.
+
+### Decisions
+- **Log-mel, not MFCC** (spec open decision 3): simpler, no DCT on-device, and the usual input for small DS-CNN keyword-spotting models.
+- Parameters (single source of truth `ml/feature_config.py`): 16 kHz, 480-sample (30 ms) window, 160 hop, 512-pt FFT, pre-emphasis 0.97 (window-local, `y[0] = x[0]`), symmetric Hamming, 40 HTK-mel filters 20 Hz–8 kHz with no area normalisation, `log(mel + 1.0)` on raw int16 units (floor = 1 LSB²).
+- `tools/gen_dsp_tables.py` generates `firmware/src/dsp/dsp_tables.{h,c}` (config `#define`s, Hamming window, sparse mel filterbank: 40 filters, 493 weights) from the Python reference, so the firmware and reference can't drift. **Regenerate after touching `ml/feature_config.py` or `ml/features.py`** (`run_phase2.sh` does it).
+- Reference (`ml/features.py`) is float64 numpy FFT plus `librosa.filters.mel` and `librosa.feature.melspectrogram(S=power)`. Window `k` covers hops k-2..k, so the reference index equals the firmware `seq` (first window is 2).
+- Firmware (`firmware/src/dsp/features.c`): float32 `arm_rfft_fast_f32` from CMSIS-DSP (submodules `third_party/CMSIS-DSP` + `third_party/CMSIS_6` for core headers), only the needed sources compiled (see `firmware/Makefile`). Calls `arm_rfft_fast_init_512_f32` directly, because the generic init pulled every FFT size's tables (99 KB flash vs 24 KB now).
+- Debug path: `DUMP_FEATURES=1` makes inference forward each feature vector to telemetry through a queue set (event queue + dump queue); telemetry prints `F <seq> <40 x float32 hex>`. Off (0) in normal builds.
+
+### Results (`features_2s`: silence, chirp+noise, hard-clipped sine, sigma=3000 white noise)
+- 198 reference windows, all present on device, no duplicates, zero overruns/drops (including the dump path).
+- Log-mel values span 0.000–30.924. **Max abs diff 1.1e-4**, mean 2e-6, p99 2e-5. Silence windows match exactly. Pass tolerance is 0.02 (about 200x margin; tighten if a later change needs it).
+- `features_compute` costs **avg 40.4 k / max 40.7 k instructions per window = 6.3 % of one 10 ms hop at 64 MHz** (budget 640 k). Whole pipeline (capture + DSP + stub inference + kernel, dump off): about 6.2 M instructions per virtual second, roughly 10 % of a 64 MHz core. The core is halted in idle WFI the rest of the time, which is the spec's §3.5 Option A evidence.
+- Footprint (dump off): 24.4 KB flash, 50 KB RAM (40 KB is the FreeRTOS heap; about 28.7 KB free). DSP task stack high-water 166 of 256 words free.
+
+### Gotchas / caveats
+- **Renode has no DWT.** Reads of 0xE0001004 hit "non existing peripheral" and return 0. `sim/platform.repl` now has a Python peripheral at 0xE0001000 that serves `CYCCNT` from `ExecutedInstructions`. With `cpu PerformanceInMips 64` that is **instructions, treated as cycles (1 IPC)**. It ignores flash wait states, FPU/multiplier latency and bus stalls, so every cycle figure is a lower bound; real-time-margin claims must say so. The firmware DWT code is unchanged and works on real hardware.
+- Python-peripheral scripts get `self.GetMachine()` (not `self.Machine`). A bad attribute is an unhandled exception that kills Renode.
+- Renode `AddHook` Python snippets cannot see functions defined in a separate `python` block, so per-function counting through hooks did not work. The DWT shim replaced it.
+- The PDM keeps producing frames after the input file ends (59 extra windows on device beyond the 198 reference windows). The cross-check ignores them; their content is unverified.
+- Heredocs containing `\` line continuations through `python - <<PY` corrupted the Makefile. Write Makefiles with the Write tool.
+
+### Not yet verified / open
+- Only synthetic signals so far. No real speech, so no statement about feature quality for KWS (Phase 3 data).
+- `float32` vs `float64` agreement is excellent on these signals. A worst case such as a strong low-frequency tone plus very quiet high bands has not been tried.
+- 1 IPC and 64 MIPS remain assumptions (see above).
+- The stub inference score still comes from raw energy, not the log-mel vector.
+
+## Next: Phase 3 — model training (off-device, Python/TensorFlow)
+Needs decisions: keyword (Speech Commands word vs custom recorded, spec open decision 2) and whether to train on the exact on-device features (recommended: reuse `ml/features.py`, so train and deploy see identical inputs). TensorFlow is already in the `tf_env` conda env; check versions and dataset availability before starting.

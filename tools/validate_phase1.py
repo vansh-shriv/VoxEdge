@@ -15,7 +15,7 @@ def check(cond, msg):
     print(("PASS " if cond else "FAIL ") + msg)
     if not cond: fails.append(msg)
 
-check(lines and lines[0] == "VOXEDGE PHASE1 BOOT", "boot banner")
+check(lines and lines[0].startswith("VOXEDGE PHASE"), "boot banner")
 check(not any(l.startswith("FATAL") for l in lines), "no FATAL")
 
 events = [(int(m[1]), m[2], int(m[3])) for l in lines if (m := re.fullmatch(r"E (\d+) ([RF]) (\d+)", l))]

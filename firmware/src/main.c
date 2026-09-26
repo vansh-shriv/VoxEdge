@@ -3,7 +3,8 @@
 
 stats_t g_stats;
 StreamBufferHandle_t g_pdm_stream;
-QueueHandle_t g_dsp_q, g_inf_q, g_evt_q;
+QueueHandle_t g_dsp_q, g_inf_q, g_evt_q, g_dump_q;
+QueueSetHandle_t g_tel_set;
 TaskHandle_t g_capture_h, g_dsp_h, g_inf_h, g_tel_h;
 
 static void fatal(const char *what)
@@ -21,14 +22,18 @@ void vApplicationIdleHook(void) { __asm volatile("wfi"); }   /* CPU sleeps betwe
 int main(void)
 {
     uart_init();
-    uart_puts("VOXEDGE PHASE1 BOOT\n");
+    uart_puts("VOXEDGE PHASE2 BOOT\n");
     wake_gpio_init();
 
     g_pdm_stream = xStreamBufferCreate(PDM_STREAM_HOPS * HOP_BYTES, HOP_BYTES);
     g_dsp_q = xQueueCreate(2, sizeof(window_msg_t));
     g_inf_q = xQueueCreate(4, sizeof(feature_msg_t));
     g_evt_q = xQueueCreate(8, sizeof(event_msg_t));
-    if (!g_pdm_stream || !g_dsp_q || !g_inf_q || !g_evt_q) fatal("alloc");
+    g_dump_q = xQueueCreate(8, sizeof(feature_msg_t));
+    g_tel_set = xQueueCreateSet(8 + 8);
+    if (!g_pdm_stream || !g_dsp_q || !g_inf_q || !g_evt_q || !g_dump_q || !g_tel_set) fatal("alloc");
+    xQueueAddToSet(g_evt_q, g_tel_set);
+    xQueueAddToSet(g_dump_q, g_tel_set);
 
     xTaskCreate(capture_task,   "capture", 256, NULL, PRIO_CAPTURE,   &g_capture_h);
     xTaskCreate(dsp_task,       "dsp",     256, NULL, PRIO_DSP,       &g_dsp_h);

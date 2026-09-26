@@ -1,6 +1,28 @@
-// Stock Arduino Nano 33 BLE Sense (nRF52840) platform, with SysTick matched to the 64 MHz core
-// clock that firmware/FreeRTOSConfig.h assumes.
+// Stock Arduino Nano 33 BLE Sense (nRF52840) platform, with:
+//  - SysTick matched to the 64 MHz core clock that firmware/FreeRTOSConfig.h assumes
+//  - a minimal DWT: Renode has no DWT model, so CYCCNT (0xE0001004) is served from the CPU's
+//    executed-instruction count. With `cpu PerformanceInMips 64` this is instructions, treated as
+//    cycles (1 IPC): it ignores flash wait states, FPU/multiplier latency and bus stalls, so it is
+//    a lower bound on real cycle cost. CTRL (0xE0001000) just stores what firmware writes.
 using "platforms/boards/arduino_nano_33_ble.repl"
 
 nvic:
     systickFrequency: 64000000
+
+dwt: Python.PythonPeripheral @ sysbus 0xE0001000
+    size: 0x1000
+    initable: true
+    script: '''
+if request.isInit:
+    ctrl = 0
+elif request.isRead:
+    if request.offset == 0x4:
+        request.value = self.GetMachine().SystemBus.GetCurrentCPU().ExecutedInstructions & 0xFFFFFFFF
+    elif request.offset == 0x0:
+        request.value = ctrl
+    else:
+        request.value = 0
+elif request.isWrite:
+    if request.offset == 0x0:
+        ctrl = request.value
+'''

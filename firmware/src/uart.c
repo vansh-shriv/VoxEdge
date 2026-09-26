@@ -39,3 +39,12 @@ void uart_putu(uint32_t v)
     do { t[--i] = '0' + v % 10; v /= 10; } while (v);
     uart_puts(&t[i]);
 }
+
+void uart_puthex32(uint32_t v)
+{
+    static const char h[] = "0123456789abcdef";
+    char t[9];
+    for (int i = 0; i < 8; i++) t[i] = h[(v >> (28 - 4 * i)) & 0xF];
+    t[8] = 0;
+    uart_puts(t);
+}

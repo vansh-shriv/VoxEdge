@@ -4,16 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (environment + simulated PDM audio ingestion) and Phase 1 (FreeRTOS task skeleton with stub DSP/inference) are done; Phase 2 (real features) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
+Phase 0 (environment + simulated PDM audio ingestion) Phase 1 (FreeRTOS task skeleton), and Phase 2 (log-mel features via CMSIS-DSP, cross-checked against a Python reference) are done. Inference is still a stub; Phase 3 (model training) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
 
 ## Commands (Git Bash on Windows)
 
 - Main firmware (FreeRTOS): `bash tools/run_phase1.sh` builds `firmware/`, runs headless Renode on `burst_3s`, and validates `build/uart0.log`. Artifacts go to `build/` (`uart0.log`, `renode.out`).
+- Feature cross-check: `bash tools/run_phase2.sh [tol]` regenerates DSP tables, builds with `DUMP_FEATURES=1`, runs `features_2s`, and diffs every on-device log-mel vector against `ml/features.py`.
 - Phase 0 bare-metal capture regression: `bash tools/run_phase0.sh` (builds `firmware/phase0`, checks UART samples equal the source PCM).
 - Build only: `cd firmware && mingw32-make -B` (`firmware/phase0` has its own Makefile). The Arm GNU Toolchain is not on PATH; the Makefile's `TOOLCHAIN` variable points at its `bin/`.
 - Run Renode by hand from the repo root: `Renode.exe --disable-xwt --plain --console -e '$pcm=@sim/wav_corpus/synthetic/<file>.s16le.pcm; include @sim/boot.resc' < /dev/null`. `boot.resc` takes `$elf`, `$pcm`, `$uartlog`, `$runtime`, loads `sim/platform.repl`, and sets `cpu PerformanceInMips 64`.
 - Generate test signals: `python tools/make_test_wav.py` (1 kHz ramp tone), `python tools/make_burst_wav.py` (silence/tone/silence).
-- After `git clone`, run `git submodule update --init` (FreeRTOS-Kernel V11.1.0 in `third_party/`).
+- After `git clone`, run `git submodule update --init` (FreeRTOS-Kernel V11.1.0, CMSIS-DSP, CMSIS_6 in `third_party/`). Python deps for `ml/` and the tools: numpy, scipy, librosa.
 - Renode input is raw s16le PCM (`pdm SetInputFile`), not WAV. In `.resc` files the UART log path must be absolute and quoted (`$ORIGIN` does not expand); `boot.resc` hardcodes `D:/EmbeddedProjects/Voxedge/build/uart0.log`.
 
 ## Project
@@ -37,6 +38,8 @@ Planned layout: `firmware/` (C, `src/dsp`, `src/model`, `src/tasks`), `ml/` (tra
 
 ## Constraints that must hold across changes
 
+- **Feature definition lives in `ml/feature_config.py` + `ml/features.py`.** Firmware tables (`firmware/src/dsp/dsp_tables.*`) are generated from them by `tools/gen_dsp_tables.py`; never hand-edit those. Training must reuse `ml/features.py` so train and deploy inputs match.
+- **Cycle numbers in Renode are instruction counts** (a DWT shim in `sim/platform.repl` serves `CYCCNT` from executed instructions at an assumed 64 MIPS / 1 IPC), so they are lower bounds. Use PDM hop `seq` for audio time, since Renode's SysTick starts about 262 ms late.
 - **Correctness cross-checks are mandatory before trusting end-to-end results**: on-device CMSIS-DSP features must match the Python/librosa reference on identical samples (§4.2), and on-device TFLite-Micro int8 output must match the Python quantized model on identical feature vectors (§4.3).
 - **Robustness requirement**: the capture task must never miss a PDM buffer handoff even when DSP/inference is stalled. Overruns must be detected, reported, and recovered from without data corruption. Test with a debug build that injects a busy-loop, and with pathological WAVs (clipped, silence, max-amplitude white noise).
 - **Honest metrics**:

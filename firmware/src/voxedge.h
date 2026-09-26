@@ -5,6 +5,8 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 #include "stream_buffer.h"
+#include "queue.h"
+#include "dsp/dsp_tables.h"
 
 #define SAMPLE_RATE_HZ   16000
 #define HOP_SAMPLES      160                    /* 10 ms hop = one PDM buffer */
@@ -21,7 +23,7 @@
 /* Window handed capture -> dsp. seq = index of the newest hop in the window. */
 typedef struct { uint32_t seq; int16_t samples[WINDOW_SAMPLES]; } window_msg_t;
 /* Features handed dsp -> inference. energy = mean square of the window. */
-typedef struct { uint32_t seq; uint32_t energy; uint8_t vad; } feature_msg_t;
+typedef struct { uint32_t seq; uint32_t energy; uint8_t vad; float logmel[FEAT_N_MELS]; } feature_msg_t;
 /* Events handed inference -> telemetry. */
 typedef enum { EVT_WAKE_ON = 'R', EVT_WAKE_OFF = 'F' } event_type_t;
 typedef struct { uint32_t seq; uint32_t tick; uint8_t type; } event_msg_t;
@@ -36,11 +38,16 @@ typedef struct {
     volatile uint32_t evt_drops;       /* events dropped: telemetry queue full */
     volatile uint32_t windows;         /* windows processed by dsp */
     volatile uint32_t inferences;      /* feature vectors processed by inference */
+    volatile uint32_t dump_drops;      /* debug feature dumps dropped: dump queue full */
+    volatile uint32_t dsp_cyc_last;    /* DWT cycles for the last features_compute() */
+    volatile uint32_t dsp_cyc_max;
+    volatile uint32_t dsp_cyc_sum;     /* over `windows` calls */
 } stats_t;
 extern stats_t g_stats;
 
 extern StreamBufferHandle_t g_pdm_stream;
-extern QueueHandle_t g_dsp_q, g_inf_q, g_evt_q;
+extern QueueHandle_t g_dsp_q, g_inf_q, g_evt_q, g_dump_q;
+extern QueueSetHandle_t g_tel_set;
 extern TaskHandle_t g_capture_h, g_dsp_h, g_inf_h, g_tel_h;
 
 /* pdm_capture.c */
@@ -50,6 +57,7 @@ void pdm_start(void);
 void uart_init(void);
 void uart_puts(const char *s);
 void uart_putu(uint32_t v);
+void uart_puthex32(uint32_t v);   /* 8 lowercase hex digits */
 /* gpio.c */
 void wake_gpio_init(void);
 void wake_gpio_set(int on);
