@@ -1,0 +1,6 @@
+// Stock Arduino Nano 33 BLE Sense (nRF52840) platform, with SysTick matched to the 64 MHz core
+// clock that firmware/FreeRTOSConfig.h assumes.
+using "platforms/boards/arduino_nano_33_ble.repl"
+
+nvic:
+    systickFrequency: 64000000

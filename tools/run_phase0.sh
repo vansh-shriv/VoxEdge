@@ -7,5 +7,5 @@ mkdir -p build
 (cd firmware/phase0 && mingw32-make -B)
 rm -f build/uart0.log
 timeout 180 "/c/Program Files/Renode/bin/Renode.exe" --disable-xwt --plain --console \
-  -e "include @sim/boot.resc" > build/renode.out 2>&1 < /dev/null
-python tools/validate_capture.py build/uart0.log "${1:-sim/wav_corpus/synthetic/tone1k_1s.s16le.pcm}"
+  -e '$elf=@firmware/phase0/phase0.elf; $pcm=@sim/wav_corpus/synthetic/tone1k_1s.s16le.pcm; $runtime="1.5"; include @sim/boot.resc' > build/renode.out 2>&1 < /dev/null || true
+python tools/validate_capture.py build/uart0.log sim/wav_corpus/synthetic/tone1k_1s.s16le.pcm

@@ -4,14 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (environment + simulated PDM audio ingestion) is done. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
+Phase 0 (environment + simulated PDM audio ingestion) and Phase 1 (FreeRTOS task skeleton with stub DSP/inference) are done; Phase 2 (real features) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
 
 ## Commands (Git Bash on Windows)
 
-- Build, run headless Renode, and validate the capture: `bash tools/run_phase0.sh` (optionally pass another `.s16le.pcm`). Artifacts go to `build/` (`uart0.log`, `renode.out`).
-- Build only: `cd firmware/phase0 && mingw32-make -B`. The Arm GNU Toolchain is not on PATH; the Makefile's `TOOLCHAIN` variable points at its `bin/`.
-- Run Renode by hand: `Renode.exe --disable-xwt --plain --console -e "include @sim/boot.resc" < /dev/null`, run from the repo root. `boot.resc` overrides via `$elf`, `$pcm`, `$uartlog`, `$runtime`.
-- Generate the synthetic test signal: `python tools/make_test_wav.py`.
+- Main firmware (FreeRTOS): `bash tools/run_phase1.sh` builds `firmware/`, runs headless Renode on `burst_3s`, and validates `build/uart0.log`. Artifacts go to `build/` (`uart0.log`, `renode.out`).
+- Phase 0 bare-metal capture regression: `bash tools/run_phase0.sh` (builds `firmware/phase0`, checks UART samples equal the source PCM).
+- Build only: `cd firmware && mingw32-make -B` (`firmware/phase0` has its own Makefile). The Arm GNU Toolchain is not on PATH; the Makefile's `TOOLCHAIN` variable points at its `bin/`.
+- Run Renode by hand from the repo root: `Renode.exe --disable-xwt --plain --console -e '$pcm=@sim/wav_corpus/synthetic/<file>.s16le.pcm; include @sim/boot.resc' < /dev/null`. `boot.resc` takes `$elf`, `$pcm`, `$uartlog`, `$runtime`, loads `sim/platform.repl`, and sets `cpu PerformanceInMips 64`.
+- Generate test signals: `python tools/make_test_wav.py` (1 kHz ramp tone), `python tools/make_burst_wav.py` (silence/tone/silence).
+- After `git clone`, run `git submodule update --init` (FreeRTOS-Kernel V11.1.0 in `third_party/`).
 - Renode input is raw s16le PCM (`pdm SetInputFile`), not WAV. In `.resc` files the UART log path must be absolute and quoted (`$ORIGIN` does not expand); `boot.resc` hardcodes `D:/EmbeddedProjects/Voxedge/build/uart0.log`.
 
 ## Project
