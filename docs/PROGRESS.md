@@ -102,5 +102,40 @@ Newest entries at the bottom of each phase. Update this file whenever a mileston
 - 1 IPC and 64 MIPS remain assumptions (see above).
 - The stub inference score still comes from raw energy, not the log-mel vector.
 
-## Next: Phase 3 — model training (off-device, Python/TensorFlow)
-Needs decisions: keyword (Speech Commands word vs custom recorded, spec open decision 2) and whether to train on the exact on-device features (recommended: reuse `ml/features.py`, so train and deploy see identical inputs). TensorFlow is already in the `tf_env` conda env; check versions and dataset availability before starting.
+## Phase 3 — model training (off-device)
+
+**Status: complete (2026-09-27).** Three DS-CNN sizes trained on the exact on-device features, quantised to full int8, and compared float vs int8. Run order: `python ml/prepare_data.py`, `python ml/train.py [v ...]`, `python ml/quantize.py [v ...]` (env: `tf_env`, TF 2.21 / Keras 3.15; see `ml/requirements.txt`).
+
+### Decisions
+- **Keyword: "marvin"** from Speech Commands v0.02 (spec open decision 2; user chose a Speech Commands word, I picked marvin because it is multi-syllable and distinctive). Change `KEYWORD` in `ml/model_config.py` and re-run to switch.
+- Classes: silence / unknown (the other 34 words) / marvin. Input is the 98x40 log-mel patch of a 1 s clip, computed by the same maths as the firmware; `ml/data.py:logmel_batch` (vectorised) matches the librosa-based `ml/features.py` to 9.5e-7, and `features.py` matches the firmware to 1.1e-4 (Phase 2).
+- Normalisation `(x - 15.1394) / 5.2580` (train mean/std, `ml/artifacts/marvin_norm.json`) is applied outside the model. The firmware will do one affine op before int8 quantisation.
+- Architecture (`ml/model.py`): strided 10x4 conv front end (98x40 -> 25x20), N x (3x3 depthwise + 1x1 pointwise), global average pool, dense logits. Only CONV_2D, DEPTHWISE_CONV_2D, MEAN, FULLY_CONNECTED remain after int8 conversion (BN folds into convs; softmax is applied outside, on logits). All have TFLite-Micro int8 kernels.
+- Model sizes were chosen from the Phase 2 cost data: a stock-size DS-CNN (~18 M MACs) would need seconds per inference on an M4 without CMSIS-NN. Hence three small variants to measure the tradeoff the spec asks for.
+
+### Data (`ml/prepare_data.py`, cache at `D:\EmbeddedProjects\datasets\kws_marvin_features.npz`, 858 MB, not in git)
+- Dataset: `speech_commands_v0.02.tar.gz` (2.43 GB) in `D:\EmbeddedProjects\datasets`, outside the repo. **`download.tensorflow.org` failed TLS verification here (certificate name mismatch), so it was fetched from the same object on Google's storage host, `storage.googleapis.com/download.tensorflow.org/data/...`; verification was not bypassed.** No published checksum was found; `gzip -t` passed.
+- Splits: the dataset's own `validation_list.txt` / `testing_list.txt` (speaker-disjoint). marvin clips: 1710 train / 195 val / 195 test. Unknown words: 83133 / 9786 / 10810.
+- Train set (29,340 clips): each marvin clip x4 (original + 3 augmented: shift +-150 ms, gain 0.5-1.5x, background noise 5-30 dB SNR with p=0.8), 20,000 randomly sampled unknown-word clips (x1, noise p=0.5), 2,500 silence clips. Background-noise files are split 80/20 in time, so val/test noise is never seen in training.
+- Test: 195 marvin + all 10,810 unknown + 400 silence, in a clean version and a noisy version (held-out noise at 10 dB SNR).
+
+### Results (int8 = what will be deployed; test set, argmax decision unless noted)
+| variant | params | MACs | int8 .tflite | hit clean / noisy (float) | hit clean / noisy (int8) | 3-class acc clean / noisy (int8) | float-int8 agreement |
+|---|---|---|---|---|---|---|---|
+| xs (16ch, 2 blocks) | 1,811 | 0.72 M | 9.6 KB | 75.9 / 57.4 % | 72.3 / 54.9 % | 98.10 / 97.85 % | 99.61 % |
+| s (24ch, 3 blocks) | 4,083 | 1.67 M | 15.6 KB | 89.2 / 87.2 % | 87.7 / 84.6 % | 98.60 / 98.05 % | 99.74 % |
+| m (48ch, 4 blocks) | 14,739 | 6.43 M | 34.0 KB | 91.8 / 89.7 % | 91.3 / 89.2 % | 99.18 / 98.67 % | 99.88 % |
+
+Operating points (int8, clip-level false accepts per hour of 1 s clips): `m` at p(marvin) >= 0.9 gives 87.2 % / 84.1 % hit (clean/noisy) at 1.0 / 3.5 FA/h; full tables are in `ml/artifacts/marvin_results_{float,int8}.json`. Quantisation costs 0.5-3.6 points of hit rate, most for the smallest model.
+- **Choice for Phase 4: `s`** (1.67 M MACs, 15.6 KB). `xs` is clearly too weak (55 % noisy hit rate). `m` buys about 4 points of hit rate for 3.9x the MACs. Phase 4 will measure real on-device cost of all three so the latency/accuracy table is complete, and the final pick can change if `s` misses its CPU budget.
+- Input quant (all variants): scale 0.023016, zero-point -3. Output (logits) quant: xs 0.1813/45, s 0.2119/30, m 0.2169/24.
+
+### Caveats (read before quoting numbers)
+- **Only 195 marvin test clips**: a hit rate has roughly +-4 points of sampling uncertainty (95 %), so `s` vs `m` differences are not clearly significant.
+- **False-accept-per-hour is clip-level** (fraction of non-keyword test clips that fire, x3600). Test negatives are 1 s clips of the other 34 words, which is harder than typical background audio but is not a streaming measurement. The real streaming figure (hours of concatenated negatives through Renode) is Phase 6.
+- The model sees a 1 s window with the word roughly centred (dataset convention plus +-150 ms shift augmentation). Streaming detection will slide this window every hop, so behaviour at other alignments is untested until Phase 4/6. Threshold and debounce are not tuned yet.
+- Unknown-word training uses 20,000 of 83,133 clips; more negatives may reduce false accepts.
+- Test data was used for reporting only. The best-validation-accuracy checkpoint was kept per variant.
+
+## Next: Phase 4 — on-device inference (TFLite-Micro)
+Integrate TFLite-Micro (submodule, static tensor arena) with `marvin_s_int8.tflite` as a C array; keep a ring of the last 98 feature vectors; run inference every N hops; quantise input with the stored scale/zero-point; measure cycles per inference for xs/s/m; parity check against the Python int8 interpreter on the same features (spec §4.3). Open: TFLM build flags on this toolchain (reference kernels vs CMSIS-NN), arena size, inference cadence vs CPU budget.

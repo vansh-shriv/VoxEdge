@@ -1,0 +1,6 @@
+# Host-side Python for ml/ and tools/ (tested with Python 3.12, conda env tf_env)
+numpy
+scipy
+librosa
+soundfile
+tensorflow>=2.16   # tested with 2.21 / Keras 3.15

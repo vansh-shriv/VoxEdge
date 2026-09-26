@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (environment + simulated PDM audio ingestion) Phase 1 (FreeRTOS task skeleton), and Phase 2 (log-mel features via CMSIS-DSP, cross-checked against a Python reference) are done. Inference is still a stub; Phase 3 (model training) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
+Phase 0 (environment + simulated PDM audio ingestion) Phase 1 (FreeRTOS task skeleton), and Phase 2 (log-mel features via CMSIS-DSP, cross-checked against a Python reference) are done. Phase 3 (model training: DS-CNN for keyword "marvin", int8 TFLite in `ml/artifacts/`) is done. On-device inference is still a stub; Phase 4 (TFLite-Micro integration) is next. **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
 
 ## Commands (Git Bash on Windows)
 
 - Main firmware (FreeRTOS): `bash tools/run_phase1.sh` builds `firmware/`, runs headless Renode on `burst_3s`, and validates `build/uart0.log`. Artifacts go to `build/` (`uart0.log`, `renode.out`).
 - Feature cross-check: `bash tools/run_phase2.sh [tol]` regenerates DSP tables, builds with `DUMP_FEATURES=1`, runs `features_2s`, and diffs every on-device log-mel vector against `ml/features.py`.
+- Model pipeline (host, long-running): `python ml/prepare_data.py` (needs the Speech Commands v0.02 archive in `D:\EmbeddedProjects\datasets`, outside the repo; writes an 858 MB feature cache), then `python ml/train.py [xs|s|m]`, `python ml/quantize.py [xs|s|m]`. `python ml/eval.py <variant>` re-evaluates a saved float model.
 - Phase 0 bare-metal capture regression: `bash tools/run_phase0.sh` (builds `firmware/phase0`, checks UART samples equal the source PCM).
 - Build only: `cd firmware && mingw32-make -B` (`firmware/phase0` has its own Makefile). The Arm GNU Toolchain is not on PATH; the Makefile's `TOOLCHAIN` variable points at its `bin/`.
 - Run Renode by hand from the repo root: `Renode.exe --disable-xwt --plain --console -e '$pcm=@sim/wav_corpus/synthetic/<file>.s16le.pcm; include @sim/boot.resc' < /dev/null`. `boot.resc` takes `$elf`, `$pcm`, `$uartlog`, `$runtime`, loads `sim/platform.repl`, and sets `cpu PerformanceInMips 64`.
