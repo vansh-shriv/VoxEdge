@@ -1,0 +1,18 @@
+# Phase 0 boot script. Usage (from repo root):
+#   renode --disable-xwt --console -e "include @sim/boot.resc"
+# Override before including: $elf, $pcm, $uartlog, $runtime
+$elf?=@firmware/phase0/phase0.elf
+$pcm?=@sim/wav_corpus/synthetic/tone1k_1s.s16le.pcm
+$uartlog?="D:/EmbeddedProjects/Voxedge/build/uart0.log"
+$runtime?="1.5"
+
+using sysbus
+mach create "voxedge"
+machine LoadPlatformDescription @platforms/boards/arduino_nano_33_ble.repl
+
+sysbus LoadELF $elf
+uart0 CreateFileBackend $uartlog true
+pdm SetInputFile $pcm
+
+emulation RunFor $runtime
+quit
