@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phases 0-4 are done: Renode PDM capture, FreeRTOS pipeline, log-mel features (CMSIS-DSP), DS-CNN keyword model for "marvin" (Speech Commands v0.02), and on-device int8 inference with TFLite-Micro + CMSIS-NN, verified against the Python model. Phase 5 (robustness/overload suite) is next, then Phase 6 (streaming evaluation corpus, CI, README). **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
+Phases 0-4 are done: Renode PDM capture, FreeRTOS pipeline, log-mel features (CMSIS-DSP), DS-CNN keyword model for "marvin" (Speech Commands v0.02), and on-device int8 inference with TFLite-Micro + CMSIS-NN, verified against the Python model. Phase 4's numbers were re-verified from clean per-configuration build trees (a `strip`-name Makefile bug had shared third-party objects across configs; fixed) and `-O2` is now the Makefile default (19% fewer instructions for the deployed model, confirmed end to end: 46% CPU, 129.7 KB flash, same wake behaviour on the demo stream). Phase 5 (robustness/overload suite) is next, then Phase 6 (streaming evaluation corpus, CI, README). **Read `docs/PROGRESS.md` first and update it whenever a milestone, decision, or gotcha lands.** The original design is in `voxedge-spec-simulator.md`. Git remote: https://github.com/vansh-shriv/VoxEdge.git (branch `main`).
 
 ## Commands (Git Bash on Windows)
 
@@ -37,4 +37,4 @@ Signal path: PCM file → Renode PDM model → PDM ISR (double buffer) → FreeR
 
 ## Resolved decisions
 
-PDM path: built-in Renode model. Features: log-mel (not MFCC). Keyword: "marvin" from Speech Commands. Model: `s` DS-CNN (4.1k params, 1.67 M MACs) with CMSIS-NN, inference every 400 ms, P_ON 0.9 (from the Phase 3 table, not yet tuned). Details and numbers are in `docs/PROGRESS.md`.
+PDM path: built-in Renode model. Features: log-mel (not MFCC). Keyword: "marvin" from Speech Commands. Model: `s` DS-CNN (4.1k params, 1.67 M MACs) with CMSIS-NN kernels at `-O2`, inference every 400 ms, P_ON 0.9 (from the Phase 3 table, not yet tuned). Details and numbers are in `docs/PROGRESS.md`.

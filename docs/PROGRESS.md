@@ -165,25 +165,29 @@ Demo stream: 5 marvin + 5 other-word clips from the test split (never trained on
 | xs | CMSIS-NN | **102/103** (one logit off by 1 LSB at seq 805: device 52 vs Python 51) | 0/380,240 | 91/91 (6 near-ties) |
 | s | CMSIS-NN | 62/62 | 0/227,360 | 58/58 |
 | m | CMSIS-NN | 28/28 | 0/105,840 | 25/25 |
+| s | CMSIS-NN, `-O2` | 77/77 | 0/286,160 | 72/72 |
 
 Reference kernels are bit-exact but were tested on very few inferences (they take seconds each). CMSIS-NN shows one 1-LSB difference in 193 inferences. It is likely a rare requantisation rounding difference in CMSIS-NN, but that is **not proven** (the reference runs are too few to isolate it). The checker requires exactness for `KERNELS=ref` and allows at most 1 LSB in at most 1 % of inferences for `cmsis`, always printing the count.
 
 ### Latency / accuracy tradeoff (instructions per `kws_infer()`, treated as cycles; see caveat)
-| model | MACs | int8 hit clean/noisy (Phase 3) | reference kernels | CMSIS-NN | speed-up | CMSIS-NN instr/MAC | arena used |
-|---|---|---|---|---|---|---|---|
-| xs | 0.72 M | 72 / 55 % | 89.97 M (1,406 ms) | **7.10 M (111 ms)** | 12.7x | 9.9 | 18.0 KB |
-| s | 1.67 M | 88 / 85 % | 199.49 M (3,117 ms) | **12.91 M (201.6 ms)** | 15.5x | 7.7 | 27.0 KB |
-| m | 6.43 M | 91 / 89 % | 722.56 M (11,290 ms) | **33.04 M (516.2 ms)** | 21.9x | 5.1 | 53.5 KB |
+Re-measured from clean per-configuration object trees (`bash tools/run_phase4_matrix.sh`, log in `build/phase4_matrix.log`) after finding the build bug below; confirms the numbers first reported were correct (they matched to within simulation noise), except for `-O2`.
 
-(ms = instructions / 64 MHz.) Reference kernels cost 112-125 instructions per MAC, unusable in real time. An `-O2` trial showed no gain, but **that trial is invalid** (see the object-sharing bug below) and is being redone.
+| model | MACs | int8 hit clean/noisy (Phase 3) | reference kernels | CMSIS-NN `-Os` | CMSIS-NN `-O2` | speed-up (`-Os`) | CMSIS-NN instr/MAC | arena used |
+|---|---|---|---|---|---|---|---|---|
+| xs | 0.72 M | 72 / 55 % | 89.97 M (1,406 ms) | **7.10 M (111.0 ms)** | - | 12.7x | 9.9 | 18.0 KB |
+| s | 1.67 M | 88 / 85 % | 199.49 M (3,117 ms) | **12.91 M (201.6 ms)** | **10.46 M (163.4 ms)** | 15.5x | 7.7 | 27.0 KB |
+| m | 6.43 M | 91 / 89 % | 722.56 M (11,290 ms) | **33.04 M (516.2 ms)** | - | 21.9x | 5.1 | 53.5 KB |
+
+(ms = instructions / 64 MHz.) Reference kernels cost 112-125 instructions per MAC, unusable in real time. `-O2` cuts CMSIS-NN's `s` cost by 19 % (12.91 M -> 10.46 M); the first "-O2 gives no gain" reading was wrong (see the build bug below) — only `s` was re-measured under `-O2` so far.
 
 ### Operating point and load
-- **Chosen: `s`, CMSIS-NN, `INFER_EVERY=40` (one inference per 400 ms), P_ON 0.9, single hit.** At the 50 ms stress cadence `s` is overloaded (248 of 310 triggers skipped), yet **capture and DSP were never starved: 0 overruns and 0 drops** in every run, including the 3-11 s reference-kernel inferences. That is the overload/degradation behaviour of spec 4.4, demonstrated.
-- Default build (no dumps): **35.3 M instr/s = 55 % of a 64 MHz core** (model about 32 M/s, features about 4 M/s), matching the sum of the parts. Idle is WFI. 114 KB flash, 136 KB RAM (64 KB arena, 48 KB FreeRTOS heap).
-- Demo stream at that setting: wake raised for **5/5 marvin clips and 0/5 other-word clips** (rises at seq 120, 440, 720, 1000, 1320). Anecdotal (10 clips, one selection seed), not an accuracy measurement.
+- **Chosen and now the Makefile default: `MODEL=s`, `KERNELS=cmsis`, `OPT=-O2`, `INFER_EVERY=40` (one inference per 400 ms), `KWS_P_ON=0.9`, single hit.** At the 50 ms stress cadence `s` is overloaded (231-248 of ~310 triggers skipped depending on `-Os`/`-O2`), yet **capture and DSP were never starved: 0 overruns and 0 drops** in every run, including the 3-11 s reference-kernel inferences. That is the overload/degradation behaviour of spec 4.4, demonstrated.
+- Re-measured end to end at the deployed setting: **29.6 M instr/s = 46 % of a 64 MHz core** (model 10.46 M instr / 0.4 s = 26.2 M/s + features about 4.0 M/s + kernel/idle overhead, consistent with the parts). Idle is WFI. Footprint: **129.7 KB flash, 136 KB RAM** (64 KB arena, 48 KB FreeRTOS heap) — `-O2` costs about 16 KB more flash than `-Os` (114 KB) for the 19 % instruction saving.
+- Demo stream, deployed setting: wake raised for **5/5 marvin clips and 0/5 other-word clips** (rises at seq 120, 440, 720, 1000, 1320, all within 1-2 inferences of the clip start) — re-confirmed with `-O2`, same result as the earlier `-Os` run.
 - Inference task stack high-water: 665 of 1024 words free, so 512 words would do.
 
 ### Gotchas found
+- **Object-sharing build bug (found and fixed after the first measurement pass)**: the Makefile helper was named `strip`, which shadows a GNU Make built-in, so `$(call strip,..)` never stripped `../` and every configuration wrote third-party objects (FreeRTOS, CMSIS-DSP/NN, TFLite-Micro) to the same `obj/third_party/...` path, shared across `MODEL`/`KERNELS`/`OPT`. Renamed to `noup`. Re-measuring every row from clean per-configuration trees (`tools/run_phase4_matrix.sh`) reproduced the original xs/s/m `-Os` numbers almost exactly (parity results and cycle counts matched to within simulation noise) — those were fine because CMSIS-NN kernel objects are cmsis-only and `-DCMSIS_NN` doesn't change the shared core objects' code. The one reading that **was** wrong: "`-O2` gives no gain", because the `-O2` build had silently reused `-Os` third-party objects. Re-measured `-O2` shows a real 19 % instruction-count reduction for `s`. Lesson: a build-config bug can produce a plausible, self-consistent wrong answer instead of an error — the fix was found by suspicion of a too-convenient result, not a crash.
 - **Windows command-line limit**: the link line exceeded it once CMSIS-NN was added. The tail was silently truncated and `ld` reported a bogus `crti.o` `_init` conflict plus a half path. Fixed with a linker response file (`@objs.rsp`; GNU Make 3.82 has no `$(file)`, so one `echo` per object).
 - **Makefile bugs that produced false passes**: (1) `voxedge.elf` was not tied to the configuration, so a stale ELF from another `MODEL` was reused; (2) adding the response-file rule ahead of the ELF rule changed the default goal, so a bare `make` stopped linking and the Phase 1/2 scripts ran stale ELFs. Fixed with a per-configuration ELF, an always-copy phony `voxedge.elf`, and `.DEFAULT_GOAL`. Lesson: check the size/telemetry of what actually ran.
 - TFLM needs `-DCMSIS_NN` when using its `cmsis_nn/` kernels (otherwise redefinition errors); `GetBuiltinCode` comes from `tensorflow/compiler/mlir/lite/schema/schema_utils.cc`; `_sbrk` is stubbed to fail so newlib `malloc` can never silently eat RAM; `.init_array` support plus empty `_init/_fini` are needed for C++ statics.
@@ -193,8 +197,8 @@ Reference kernels are bit-exact but were tested on very few inferences (they tak
 ### Caveats / not yet verified
 - **Instructions are not cycles**: `kws_infer` numbers come from the DWT shim (`ExecutedInstructions`, assumed 64 MIPS at 1 IPC). A real M4 has flash wait states, load-use stalls and multi-cycle FPU ops, so real time is longer. CMSIS-NN's SIMD kernels may also have a different instruction-to-cycle ratio than the reference kernels, so the speed-up ratios are indicative only.
 - Decision parameters (P_ON, single hit, cadence) come from the Phase 3 table, not tuning. Real hit rate and false accepts per hour on streaming audio come in Phase 6.
-- 7.7 instr/MAC is high for CMSIS-NN; which layer dominates is not profiled (the 10x4 strided front-end conv is a suspect).
-- Nothing yet skips inference during silence; a cheap energy gate could cut the 55 % load substantially.
+- 7.7 instr/MAC (`-Os`) / 6.3 instr/MAC (`-O2`, `s` only) is still high for CMSIS-NN; which layer dominates is not profiled (the 10x4 strided front-end conv is a suspect). `xs` and `m` have not been re-measured under `-O2` (not the deployed model, lower priority).
+- Nothing yet skips inference during silence; a cheap energy gate could cut the load substantially.
 
 ## Next: Phase 5 — robustness and overload testing
 Deliberate stalls (debug busy-loop in DSP/inference), pathological WAVs (clipped, silence, max-amplitude noise), watchdog, buffer-overrun recovery, long-run stack/heap watermarks (spec 4.4). Much of the overload behaviour is already demonstrated above; Phase 5 makes it a systematic test suite.

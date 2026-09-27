@@ -19,7 +19,7 @@ DUMP_FEATURES ?= 0
 DUMP_INFER    ?= 0
 ARENA_KB      ?= 64
 KERNELS       ?= cmsis
-OPT           ?= -Os
+OPT           ?= -O2
 INFER_EVERY   ?= 40
 DUMP_INPUT_EVERY ?= 8
 
