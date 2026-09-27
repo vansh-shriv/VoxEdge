@@ -16,7 +16,7 @@ mkdir -p build
   || { tail -30 build/fw_build.log; exit 1; }
 grep -E "^ +[0-9]+ +[0-9]+ +[0-9]+ +[0-9]+" build/fw_build.log | tail -1 || true
 rm -f build/uart0.log
-timeout 900 "/c/Program Files/Renode/bin/Renode.exe" --disable-xwt --plain --console \
+timeout 900 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
   -e "\$pcm=@$PCM; \$runtime=\"$RUNTIME\"; include @sim/boot.resc" > build/renode.out 2>&1 < /dev/null || true
 KERN=cmsis; for a in "$@"; do [ "$a" = "KERNELS=ref" ] && KERN=ref; done
 python tools/crosscheck_model.py build/uart0.log "$PCM" "$MODEL" "$KERN" 2>&1 | grep -v -E "oneDNN|absl|I0000|E0000|W0000|Warning|warn|deprecated|TF 2|migration|details|^ *$|AVX|instructions|XNNPACK"

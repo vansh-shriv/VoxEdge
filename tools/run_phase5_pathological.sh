@@ -14,7 +14,7 @@ for name in silence clipped noise_max mixed; do
   HOPS=$(python -c "print(int($DUR*100))")
   echo "=== $name (${DUR}s, ~$HOPS hops)"
   rm -f build/uart0.log
-  timeout 180 "/c/Program Files/Renode/bin/Renode.exe" --disable-xwt --plain --console \
+  timeout 180 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
     -e "\$pcm=@$PCM; \$runtime=\"$(python -c "print($DUR+0.5)")\"; include @sim/boot.resc" \
     > build/renode.out 2>&1 < /dev/null || true
   python tools/crosscheck_pathological.py build/uart0.log "$HOPS" || status=1

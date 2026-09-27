@@ -1,0 +1,95 @@
+# VoxEdge CI: firmware build + the fast Renode-driven regressions (Phases 0/1/2/4 core, 5 stall +
+# pathological). Excluded on purpose (too slow/heavy for a per-push gate, run manually instead):
+#   - ml/prepare_data.py / train.py / quantize.py (Phase 3): needs the 2.4 GB Speech Commands
+#     archive and GPU-less training is tens of minutes; the trained artifacts are committed under
+#     ml/artifacts/ and firmware/src/model/, so the firmware build/test steps below use them as-is.
+#   - tools/run_phase5_longrun.sh and tools/run_phase6_eval.sh: need the same dataset and run for
+#     many (real) minutes of simulated audio.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install numpy scipy librosa soundfile tensorflow
+
+      - name: Install make (mingw32-make)
+        run: |
+          choco install mingw --no-progress -y
+          # choco updates the registry PATH, which later bash steps in this job may not re-read;
+          # find mingw32-make.exe explicitly and add its directory via $GITHUB_PATH instead.
+          dir=$(dirname "$(find "/c/ProgramData/chocolatey/lib/mingw" -iname mingw32-make.exe | head -1)")
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Install Renode (portable)
+        run: |
+          curl -LsS -o renode.zip https://github.com/renode/renode/releases/download/v1.16.0/renode-1.16.0.windows-portable-dotnet.zip
+          unzip -q renode.zip -d "$RUNNER_TEMP/renode"
+          dir=$(ls -d "$RUNNER_TEMP"/renode/renode_*)
+          echo "RENODE_BIN=$dir/renode.exe" >> "$GITHUB_ENV"
+
+      - name: Install Arm GNU Toolchain
+        run: |
+          curl -LsS -o gcc.zip https://developer.arm.com/-/media/Files/downloads/gnu/12.2.mpacbti-rel1/binrel/arm-gnu-toolchain-12.2.mpacbti-rel1-mingw-w64-i686-arm-none-eabi.zip
+          unzip -q gcc.zip -d "$RUNNER_TEMP/gcc"
+          dir=$(ls -d "$RUNNER_TEMP"/gcc/arm-gnu-toolchain-*)
+          echo "TOOLCHAIN=$dir/bin/" >> "$GITHUB_ENV"
+
+      - name: Fetch TFLite-Micro third-party deps
+        run: bash tools/fetch_tflm_deps.sh
+
+      - name: Generate test signals
+        run: |
+          python tools/make_test_wav.py
+          python tools/make_burst_wav.py
+          python tools/make_feature_test_wav.py
+          # sim/wav_corpus/kws/demo.* and sim/wav_corpus/pathological/*.* are committed already
+          # (they need the Speech Commands dataset cache to regenerate, which CI does not have).
+
+      - name: Phase 0 - bare-metal PDM capture
+        run: bash tools/run_phase0.sh
+
+      - name: Phase 1 - FreeRTOS pipeline plumbing
+        run: bash tools/run_phase1.sh
+
+      - name: Phase 2 - feature cross-check vs Python reference
+        run: bash tools/run_phase2.sh
+
+      - name: Phase 4 - on-device model parity (default s/CMSIS-NN/-O2)
+        run: bash tools/run_phase4.sh s 16.5 sim/wav_corpus/kws/demo.s16le.pcm INFER_EVERY=40
+
+      - name: Phase 5 - deliberate stall recovers (finite)
+        run: bash tools/run_phase5_stall.sh dsp 300 600
+
+      - name: Phase 5 - deliberate stall trips the watchdog (unbounded)
+        run: bash tools/run_phase5_stall.sh inference 320 0
+
+      - name: Phase 5 - pathological audio
+        run: bash tools/run_phase5_pathological.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build/*.log
+            build/*.out

@@ -229,5 +229,40 @@ Re-measured from clean per-configuration object trees (`bash tools/run_phase4_ma
 - `WDT_TIMEOUT_MS=2000` is a round number, not derived from the deployed pipeline's actual worst-case task latencies (Phase 4's `s`/CMSIS-NN/`-O2` model takes ~163 ms; the DSP feature step ~0.6 ms). It has not been tuned to the tightest safe value.
 - Buffer-overrun *injection* (forcing the PDM stream buffer itself to actually overflow, as opposed to the downstream DSP/inference queues backing up) was not separately tested; Phase 0/1 already established the ISR drops a whole hop and counts `pdm_overruns` rather than writing a partial one, and no test in Phases 1-5 has yet driven `pdm_overruns` above 0. Worth a dedicated test (e.g., stall the *capture* task itself, which nothing currently does) if that path needs direct evidence.
 
-## Next: Phase 6 — full evaluation, CI, and polish
-Assemble the WAV test corpora (positive/clean, positive/noisy, negative) per spec 4.1, run the streaming evaluation sweep (real hit-rate and false-accepts-per-hour, not the clip-level Phase 3 numbers), tune P_ON/cadence/debounce on that corpus, wire the regression scripts into GitHub Actions, and write the README with architecture diagram, results tables, and the power-scope note (spec §4.5 / §6).
+## Phase 6 — full evaluation, CI, and polish
+
+**Status: complete (2026-09-27).** Real streaming hit-rate / false-accept metrics from the deployed firmware, a fast CI workflow, and top-level docs (`README.md`, `docs/results.md`, `docs/design.md`).
+
+### Streaming evaluation corpora and results (spec 4.1/4.5)
+- `tools/make_eval_streams.py` builds three continuous streams from the Speech Commands **test split only** (never trained/validated on): `positive_clean` (80 marvin clips, 1 s silence gaps — spec asks 50+), `positive_noisy` (the same 80 mixed with held-out background noise at 5 dB SNR — harder than the 10 dB used for the Phase 3 clip-level test set), and `negative` (30 minutes of unknown-word clips interleaved with held-out background noise — spec's stated minimum).
+- `tools/run_phase6_eval.sh` runs the **deployed, unmodified firmware** (`s`, CMSIS-NN, `-O2`, `INFER_EVERY=40` = 400 ms cadence, `KWS_P_ON=0.9`, single-hit decision) against each stream in Renode; `tools/crosscheck_eval.py` scores real wake events (`E ... R`) against the clip manifest (positive streams) or counts them per hour (negative stream).
+- Results:
+
+  | stream | content | result |
+  |---|---|---|
+  | positive, clean | 80 marvin clips | **81.2% hit rate** (65/80) |
+  | positive, noisy | same clips + noise, 5 dB SNR | **61.3% hit rate** (49/80) |
+  | negative | 30 min unknown words + noise | **2.00 false accepts/hour** (1 event in 30 min) |
+
+- The streaming clean-hit-rate (81.2%) is close to the Phase 3 clip-level number for `s` at the same threshold (81.5%): the 400 ms cadence / 980 ms ring window does not cost much accuracy by itself, because consecutive inference windows overlap enough (980 ms window, 400 ms stride) that a 1 s word is very unlikely to fall entirely outside every window. The noisy-stream number is well below its clip-level counterpart (61.3% vs 75.4% at 10 dB), consistent with continuously-varying real background noise (5 dB, a harder SNR) being harder than the fixed-SNR isolated clips.
+- No threshold/cadence retuning was done: `KWS_P_ON=0.9` / 400 ms / single-hit (chosen in Phase 4 from the Phase 3 clip-level table) was carried through unchanged and evaluated honestly rather than fitted to this corpus. The result validates that choice: 2.00 FA/hour is low (only 1 event in 30 min of continuous non-keyword speech and noise) alongside a reasonable clean hit rate, so nothing here argues for retuning before a real deployment — though a single 30-minute negative sample is a small statistical base for a rate this low (see caveats below).
+- `tools/plot_detection_timeline.py` renders a spectrogram + true-keyword-window + wake-event plot from real eval data (`docs/img/detection_timeline.png`, first 30 s of `positive_clean`), used in the README.
+
+### CI (`.github/workflows/ci.yml`)
+- `windows-latest`, Git Bash steps. Installs Renode 1.16.0 (portable zip — verified against the actual GitHub release asset name and internal path, `renode_1.16.0-dotnet_portable/renode.exe`), the Arm GNU Toolchain (verified the download URL resolves, 365 MB zip), and `mingw32-make` via `choco install mingw` (with an explicit `find` + `$GITHUB_PATH` append, since Chocolatey's PATH update may not reach later steps' fresh shells).
+- Runs Phases 0/1/2/4(default)/5(stall finite+infinite, pathological) — all self-contained, no dataset needed (`ml/artifacts/*.tflite`, `firmware/src/model/*.c`, and `sim/wav_corpus/{kws,pathological}/*` are committed).
+- Deliberately excludes Phase 3 (training), Phase 5 long-run, and Phase 6 eval: all three need the 2.4 GB Speech Commands archive and run for many real minutes, too slow/heavy for a per-push gate. Documented at the top of the workflow file.
+- Renode/toolchain paths are no longer hardcoded in the runner scripts: all `tools/run_phase*.sh` now use `${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}`, defaulting to the local dev install but overridable (CI sets `RENODE_BIN`/`TOOLCHAIN` via `$GITHUB_ENV`).
+- **Caveat: this workflow has not been observed running to completion.** There is no `gh` CLI or GitHub credential available in this environment, so I could not trigger a run and watch it, only verify each piece in isolation (YAML parses; the Renode/toolchain URLs resolve to the expected files; the local scripts it calls pass locally). Check the Actions tab after the first push and fix anything that doesn't hold up in that environment (most likely failure point: the `mingw32-make` discovery step, since it depends on Chocolatey's exact install layout, which was not verified directly).
+
+### Top-level docs
+- `README.md`: quick start, architecture diagram, model/streaming-eval/robustness result tables, the power-scope note, repo layout.
+- `docs/results.md`: compact results index across all phases (spec's `docs/results.md` from the repo layout).
+- `docs/design.md`: scope note + architecture + key decisions in one place (spec's `docs/design.md`).
+
+### Caveats / not yet verified
+- Streaming false-accept rate is a single 30-minute sample; the spec's minimum, not a generous margin. A longer negative corpus would tighten the confidence interval.
+- CI workflow is unverified end-to-end (see above).
+- No threshold/cadence tuning loop was run against the streaming corpus (see above) — Phase 4's clip-level-derived operating point was evaluated, not optimised, against it.
+
+## Project status: all six phases of the original spec (`voxedge-spec-simulator.md`) are complete.

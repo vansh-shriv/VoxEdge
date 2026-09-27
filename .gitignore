@@ -5,3 +5,4 @@ __pycache__/
 third_party/tflm_deps/
 firmware/obj/
 sim/wav_corpus/longrun/
+sim/wav_corpus/eval/negative.*
