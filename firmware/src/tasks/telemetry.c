@@ -47,6 +47,7 @@ void telemetry_task(void *arg)
         }
         if (xTaskGetTickCount() >= next) {
             next += pdMS_TO_TICKS(1000);
+            wdt_feed();
             uart_puts("T");
             kv("tick", xTaskGetTickCount());
             kv("pdm", g_stats.pdm_frames);   kv("hops", g_stats.hops);

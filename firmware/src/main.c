@@ -23,7 +23,8 @@ void vApplicationIdleHook(void) { __asm volatile("wfi"); }   /* CPU sleeps betwe
 int main(void)
 {
     uart_init();
-    uart_puts("VOXEDGE PHASE4 BOOT\n");
+    uart_puts("VOXEDGE PHASE5 BOOT\n");
+    if (wdt_was_reset_cause()) uart_puts("RESET_CAUSE=WDT\n");
     wake_gpio_init();
 
     int rc = kws_init();
@@ -58,6 +59,7 @@ int main(void)
 
     pdm_init(g_pdm_stream);
     pdm_start();
+    wdt_init(WDT_TIMEOUT_MS);
     vTaskStartScheduler();
     fatal("scheduler");
     return 0;

@@ -20,6 +20,9 @@
 #ifndef VOXEDGE_DUMP_INFER
 #define VOXEDGE_DUMP_INFER 0
 #endif
+#ifndef WDT_TIMEOUT_MS
+#define WDT_TIMEOUT_MS 2000   /* fed once/second by telemetry (prio 1); 2x margin under normal load */
+#endif
 
 /* Task priorities: ISR > capture > dsp > inference > telemetry > idle (0). */
 #define PRIO_CAPTURE     5
@@ -71,6 +74,10 @@ extern TaskHandle_t g_capture_h, g_dsp_h, g_inf_h, g_tel_h;
 extern int8_t g_snap[KWS_INPUT_BYTES];
 extern volatile uint32_t g_snap_seq;
 extern volatile uint8_t g_infer_busy;
+
+/* wdt.c, debug_stall.c: see their headers */
+#include "wdt.h"
+#include "debug_stall.h"
 
 /* pdm_capture.c */
 void pdm_init(StreamBufferHandle_t sink);

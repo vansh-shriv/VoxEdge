@@ -52,6 +52,7 @@ void inference_task(void *arg)
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         uint32_t seq = g_snap_seq;
+        debug_stall_maybe(STALL_TASK_INFERENCE, seq);
 
         uint32_t t0 = DWT_CYCCNT;
         int rc = kws_infer(g_snap, logits);

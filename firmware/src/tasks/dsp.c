@@ -31,6 +31,7 @@ void dsp_task(void *arg)
 
     for (;;) {
         if (xQueueReceive(g_dsp_q, &win, portMAX_DELAY) != pdPASS) continue;
+        debug_stall_maybe(STALL_TASK_DSP, win.seq);
 
         uint32_t t0 = DWT_CYCCNT;
         features_compute(win.samples, logmel);

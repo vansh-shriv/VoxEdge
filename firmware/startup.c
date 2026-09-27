@@ -21,6 +21,7 @@ void SVC_Handler(void) WEAK_DEFAULT;        /* FreeRTOS: vPortSVCHandler */
 void PendSV_Handler(void) WEAK_DEFAULT;     /* FreeRTOS: xPortPendSVHandler */
 void SysTick_Handler(void) WEAK_DEFAULT;    /* FreeRTOS: xPortSysTickHandler */
 void PDM_IRQHandler(void) WEAK_DEFAULT;
+void WDT_IRQHandler(void) WEAK_DEFAULT;
 
 void Reset_Handler(void)
 {
@@ -42,5 +43,6 @@ void (* const vectors[16 + 48])(void) = {
     [3] = HardFault_Handler, [4] = MemManage_Handler, [5] = BusFault_Handler,
     [6] = UsageFault_Handler, [7] = 0, [8] = 0, [9] = 0, [10] = 0,
     [11] = SVC_Handler, [12] = 0, [13] = 0, [14] = PendSV_Handler, [15] = SysTick_Handler,
+    [16 + 16] = WDT_IRQHandler,
     [16 + 29] = PDM_IRQHandler,
 };

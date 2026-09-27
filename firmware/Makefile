@@ -8,6 +8,10 @@
 #   ARENA_KB=<n>        TFLite-Micro tensor arena size
 #   INFER_EVERY=<hops>  run the model every N hops (10 ms each)
 #   DUMP_INPUT_EVERY=<n> with DUMP_INFER=1, dump the full input tensor every n-th run
+#   WDT_TIMEOUT_MS=<n>  hardware watchdog timeout (default 2000; fed once/second by telemetry)
+#   STALL_TASK=0|1|2    Phase 5 debug stall: 0 none, 1 dsp, 2 inference (see src/debug_stall.h)
+#   STALL_AT_SEQ=<n>    hop sequence number that triggers the stall
+#   STALL_MS=<n>        stall duration in ms (0 = forever; only the watchdog recovers from that)
 .DEFAULT_GOAL := voxedge.elf
 TOOLCHAIN ?= C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/12.2 mpacbti-rel1/bin/
 CC   := "$(TOOLCHAIN)arm-none-eabi-gcc"
@@ -22,6 +26,10 @@ KERNELS       ?= cmsis
 OPT           ?= -O2
 INFER_EVERY   ?= 40
 DUMP_INPUT_EVERY ?= 8
+WDT_TIMEOUT_MS ?= 2000
+STALL_TASK    ?= 0
+STALL_AT_SEQ  ?= 0xFFFFFFFF
+STALL_MS      ?= 0
 
 RTOS       := ../third_party/FreeRTOS-Kernel
 CMSIS_DSP  := ../third_party/CMSIS-DSP
@@ -77,7 +85,7 @@ CXXSRCS := $(wildcard src/model/*.cc) \
 CXXSRCS := $(filter-out %/recording_single_arena_buffer_allocator.cc,$(CXXSRCS))
 
 # One object tree per configuration: the -D flags change the code, so objects must not be shared.
-OBJDIR := obj/$(KERNELS)$(OPT)-$(MODEL)-f$(DUMP_FEATURES)i$(DUMP_INFER)-e$(INFER_EVERY)-a$(ARENA_KB)-q$(DUMP_INPUT_EVERY)
+OBJDIR := obj/$(KERNELS)$(OPT)-$(MODEL)-f$(DUMP_FEATURES)i$(DUMP_INFER)-e$(INFER_EVERY)-a$(ARENA_KB)-q$(DUMP_INPUT_EVERY)-w$(WDT_TIMEOUT_MS)-s$(STALL_TASK).$(STALL_AT_SEQ).$(STALL_MS)
 # (not named 'strip': that is a make built-in and $(call strip,..) would silently call it)
 noup    = $(subst ../,,$(1))
 OBJS    := $(addprefix $(OBJDIR)/,$(addsuffix .o,$(call noup,$(CSRCS) $(CXXSRCS))))
@@ -90,7 +98,8 @@ INC      := -I. -Isrc -Isrc/dsp -Isrc/model -I$(RTOS)/include -I$(RTOS)/portable
             -I$(CMSIS_DSP)/Include -I$(CMSIS_DSP)/PrivateInclude -I$(CMSIS_CORE)
 TFLM_INC := -I$(TFLM) -I$(CMSIS_NN) -I$(CMSIS_NN)/Include -I$(TFLM_DEPS)/flatbuffers/include -I$(TFLM_DEPS)/gemmlowp -I$(TFLM_DEPS)/ruy
 DEFS     := -DVOXEDGE_DUMP_FEATURES=$(DUMP_FEATURES) -DVOXEDGE_DUMP_INFER=$(DUMP_INFER) \
-            -DARM_NN_ENABLE_F16=0 -DARM_NN_ENABLE_F32=0 -DKWS_MODEL=$(MODEL) -DKWS_ARENA_BYTES=$(ARENA_KB)*1024 -DKWS_INFER_EVERY=$(INFER_EVERY) -DKWS_DUMP_INPUT_EVERY=$(DUMP_INPUT_EVERY)
+            -DARM_NN_ENABLE_F16=0 -DARM_NN_ENABLE_F32=0 -DKWS_MODEL=$(MODEL) -DKWS_ARENA_BYTES=$(ARENA_KB)*1024 -DKWS_INFER_EVERY=$(INFER_EVERY) -DKWS_DUMP_INPUT_EVERY=$(DUMP_INPUT_EVERY) \
+            -DWDT_TIMEOUT_MS=$(WDT_TIMEOUT_MS) -DSTALL_TASK=$(STALL_TASK) -DSTALL_AT_SEQ=$(STALL_AT_SEQ) -DSTALL_MS=$(STALL_MS)
 COMMON   := $(ARCH) $(OPT) -g -ffunction-sections -fdata-sections -fno-common -MMD -MP
 CFLAGS   := $(COMMON) -Wall -Wextra -Wno-override-init $(INC) -I$(CMSIS_NN) -I$(CMSIS_NN)/Include $(DEFS)
 CXXFLAGS := $(COMMON) -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
