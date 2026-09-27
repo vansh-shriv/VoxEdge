@@ -12,14 +12,16 @@ mkdir -p build
 [ -f "$EVAL/negative.s16le.pcm" ] || python tools/make_eval_streams.py
 (cd firmware && mingw32-make -j8 "$@" > ../build/fw_build.log 2>&1) || { tail -30 build/fw_build.log; exit 1; }
 
+UART_LOG="$(pwd -W)/build/uart0.log"   # must be absolute: CreateFileBackend does not resolve relative/@ paths
 run() {  # name pcm runtime_s
   local name=$1 pcm=$2 rt=$3
   echo "=== $name ($rt s)"
   taskkill //F //IM Renode.exe > /dev/null 2>&1 || true   # a prior run can leave an orphan holding uart0.log open
   rm -f build/uart0.log
   timeout 1800 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
-    -e "\$pcm=@$pcm; \$runtime=\"$rt\"; include @sim/boot.resc" \
+    -e "\$pcm=@$pcm; \$runtime=\"$rt\"; \$uartlog=\"$UART_LOG\"; include @sim/boot.resc" \
     > "build/renode_$name.out" 2>&1 < /dev/null || true
+  [ -s build/uart0.log ] || { echo "Renode produced no uart0.log; see build/renode_$name.out:" >&2; tail -20 "build/renode_$name.out" >&2; exit 1; }
   cp build/uart0.log "build/uart0_$name.log"
 }
 

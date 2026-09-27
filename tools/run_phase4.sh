@@ -16,7 +16,9 @@ mkdir -p build
   || { tail -30 build/fw_build.log; exit 1; }
 grep -E "^ +[0-9]+ +[0-9]+ +[0-9]+ +[0-9]+" build/fw_build.log | tail -1 || true
 rm -f build/uart0.log
+UART_LOG="$(pwd -W)/build/uart0.log"   # must be absolute: CreateFileBackend does not resolve relative/@ paths
 timeout 900 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
-  -e "\$pcm=@$PCM; \$runtime=\"$RUNTIME\"; include @sim/boot.resc" > build/renode.out 2>&1 < /dev/null || true
+  -e "\$pcm=@$PCM; \$runtime=\"$RUNTIME\"; \$uartlog=\"$UART_LOG\"; include @sim/boot.resc" > build/renode.out 2>&1 < /dev/null || true
+[ -s build/uart0.log ] || { echo "Renode produced no uart0.log; see build/renode.out:" >&2; tail -20 build/renode.out >&2; exit 1; }
 KERN=cmsis; for a in "$@"; do [ "$a" = "KERNELS=ref" ] && KERN=ref; done
 python tools/crosscheck_model.py build/uart0.log "$PCM" "$MODEL" "$KERN" 2>&1 | grep -v -E "oneDNN|absl|I0000|E0000|W0000|Warning|warn|deprecated|TF 2|migration|details|^ *$|AVX|instructions|XNNPACK"

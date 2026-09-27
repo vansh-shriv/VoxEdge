@@ -14,7 +14,9 @@ mkdir -p build
 (cd firmware && mingw32-make -j8 STALL_TASK=$TID STALL_AT_SEQ=$SEQ STALL_MS=$MS WDT_TIMEOUT_MS=$WDT \
   > ../build/fw_build.log 2>&1) || { tail -30 build/fw_build.log; exit 1; }
 rm -f build/uart0.log
+UART_LOG="$(pwd -W)/build/uart0.log"   # must be absolute: CreateFileBackend does not resolve relative/@ paths
 timeout 180 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
-  -e "\$pcm=@sim/wav_corpus/kws/demo.s16le.pcm; \$runtime=\"$RUNTIME\"; include @sim/boot.resc" \
+  -e "\$pcm=@sim/wav_corpus/kws/demo.s16le.pcm; \$runtime=\"$RUNTIME\"; \$uartlog=\"$UART_LOG\"; include @sim/boot.resc" \
   > build/renode.out 2>&1 < /dev/null || true
+[ -s build/uart0.log ] || { echo "Renode produced no uart0.log; see build/renode.out:" >&2; tail -20 build/renode.out >&2; exit 1; }
 python tools/crosscheck_stall.py build/uart0.log "$MODE" "$TASK_NAME"

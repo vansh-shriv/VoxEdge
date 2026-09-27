@@ -10,8 +10,10 @@ mkdir -p build
 [ -f "$PCM" ] || python tools/make_longrun_wav.py "$MIN"
 (cd firmware && mingw32-make -j8 STALL_TASK=0 > ../build/fw_build.log 2>&1) || { tail -30 build/fw_build.log; exit 1; }
 rm -f build/uart0.log
+UART_LOG="$(pwd -W)/build/uart0.log"   # must be absolute: CreateFileBackend does not resolve relative/@ paths
 RUNTIME=$(python -c "print($MIN*60+1)")
 timeout 900 "${RENODE_BIN:-/c/Program Files/Renode/bin/Renode.exe}" --disable-xwt --plain --console \
-  -e "\$pcm=@$PCM; \$runtime=\"$RUNTIME\"; include @sim/boot.resc" \
+  -e "\$pcm=@$PCM; \$runtime=\"$RUNTIME\"; \$uartlog=\"$UART_LOG\"; include @sim/boot.resc" \
   > build/renode.out 2>&1 < /dev/null || true
+[ -s build/uart0.log ] || { echo "Renode produced no uart0.log; see build/renode.out:" >&2; tail -20 build/renode.out >&2; exit 1; }
 python tools/crosscheck_longrun.py build/uart0.log
