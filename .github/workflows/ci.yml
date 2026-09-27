@@ -42,14 +42,17 @@ jobs:
       - name: Install Renode (portable)
         run: |
           curl -LsS -o renode.zip https://github.com/renode/renode/releases/download/v1.16.0/renode-1.16.0.windows-portable-dotnet.zip
-          unzip -q renode.zip -d "$RUNNER_TEMP/renode"
+          unzip -oq renode.zip -d "$RUNNER_TEMP/renode"
           dir=$(ls -d "$RUNNER_TEMP"/renode/renode_*)
           echo "RENODE_BIN=$dir/renode.exe" >> "$GITHUB_ENV"
 
       - name: Install Arm GNU Toolchain
         run: |
           curl -LsS -o gcc.zip https://developer.arm.com/-/media/Files/downloads/gnu/12.2.mpacbti-rel1/binrel/arm-gnu-toolchain-12.2.mpacbti-rel1-mingw-w64-i686-arm-none-eabi.zip
-          unzip -q gcc.zip -d "$RUNNER_TEMP/gcc"
+          # -o: force overwrite. The archive has doc filenames that collide case-insensitively
+          # (e.g. QMemTags.html), which without -o makes unzip prompt on Windows's case-insensitive
+          # filesystem; with no interactive stdin that prompt hangs and fails the step.
+          unzip -oq gcc.zip -d "$RUNNER_TEMP/gcc"
           dir=$(ls -d "$RUNNER_TEMP"/gcc/arm-gnu-toolchain-*)
           echo "TOOLCHAIN=$dir/bin/" >> "$GITHUB_ENV"
 
